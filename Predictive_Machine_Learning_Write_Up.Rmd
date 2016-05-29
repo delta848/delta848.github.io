@@ -1,0 +1,88 @@
+---
+title: "Predictive Machine Learning Write Up"
+author: "Louise F"
+date: "28 May 2016"
+output: html_document
+---
+
+##Introduction
+
+Using data available at http://groupware.les.inf.puc-rio.br/har , a predictive model is made using accelerometer data to predict what method (importantly, a correct or incorrect method) is being used to perform a weight lift exercise. See the above link for further information on the data and how it was gathered.
+
+##Data Cleansing
+The data was loaded from the HAR repository, the summary was scanned, columns were checked for a high number of NAs (including blanks and other NA alternatives). Columns with a high number of NAs were removed for further processing.
+
+```{r data cleansing}
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+## replacing alternatives to NAs (blanks and DIV/0s)
+trainingc <- training
+trainingc[trainingc==""]<-NA
+trainingc[trainingc=="#DIV/0!"]<-NA
+## find lots of variables that have a high number of NAs - 19216, this looks a set of variables that were only gathered for a small subset of the sample
+aggregate(data.frame(count = colSums(is.na(trainingc))), list(value = colSums(is.na(trainingc))), length)
+## decide to remove the NA variables, and the non-predictive variables from the data
+colstodrop <- c(colnames(trainingc)[colSums(is.na(trainingc)) > 0],"X","user_name", "raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window")
+trainingsub <- trainingc[,!(names(trainingc) %in% colstodrop)]
+```
+
+##Data Partitioning and Cross Validation
+In order to perform internal testing and cross-validation, the data was split into an internal training (60%), test(20%), and validation set(20%).
+The training set will be used to train the models, the testing set will be used to determine the model with the highest accuracy, and the validation set will be used to identify the expected out of sample error rate.
+
+```{r data partitioning}
+library(caret)
+library(randomForest)
+##set seed for upcoming random processes
+set.seed(84848)
+##partition data
+partition1 <- createDataPartition(trainingsub$classe, p=0.6, list=FALSE)
+tobesplit <- trainingsub[-partition1,]
+inttrain <- trainingsub[partition1,]
+partition2 <- createDataPartition(tobesplit$classe, p=0.5, list=FALSE)
+inttest <- tobesplit[-partition2,]
+intval <- tobesplit[partition2,]
+```
+##Model Building and Selection
+
+To determine accuracy of models for this data, a set of models of different types were created, and the accuracy of these was compared, shown at the end of this section.
+These models include a decision tree, a random forest, linear discriminate analysis, and a boosting model. 
+
+```{r cache=TRUE}
+##Try out some models and compare for accuracy
+rpart1 <- train(classe ~., data=inttrain, method="rpart")
+rpart1acc <-confusionMatrix(predict(rpart1,inttest[,-53]),inttest$classe)$overall["Accuracy"]
+
+rf1 <- train(classe ~., data=inttrain, method="rf")
+rf1acc <- confusionMatrix(predict(rf1,inttest[,-53]),inttest$classe)$overall["Accuracy"]
+
+lda1 <- train(classe ~., data=inttrain, method="lda")
+lda1acc <-confusionMatrix(predict(lda1,inttest[,-53]),inttest$classe)$overall["Accuracy"]
+
+gbm1 <- train(classe ~., data=inttrain, method="gbm", verbose=FALSE)
+gbm1acc <-confusionMatrix(predict(gbm1,inttest[,-53]),inttest$classe)$overall["Accuracy"]
+
+data.frame(rpart1acc, rf1acc,lda1acc,gbm1acc)
+```
+The model chosen was the random forest, which takes into account multiple decision trees, this method is usually highly accurate but limited in interpretability, but in this instance interpretability was not one of the key factors in model selection.
+
+##Expected out of sample error
+The expected out of sample error rate can be estimated by the performance on a dataset un-used for training or model selection. In this case, the validation data set was set aside for this purpose. When the validation data set is used, the model outcome was as below:
+
+```{r expected out of sample error}
+##Compare for out of sample error on the validation set
+valpred<-predict(rf1,intval[,-53])
+confusionMatrix(valpred,intval$classe)
+```
+
+So the out of sample error is expected to be 1- accuracy, which in this case is 0.84%.
+
+##Outcomes
+The chosen model, when used against the official test set has the below predictions:
+```{r outcomes}
+##load test data
+testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+## cleanse test data
+testingsub <- testing[,!(names(testing) %in% colstodrop)]
+##Compare for out of sample error on the validation set
+testpred<-predict(rf1,testingsub[,-53])
+```
